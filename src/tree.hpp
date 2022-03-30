@@ -403,6 +403,18 @@ class RbTree {
     }
     size_ = 0;
   }
+  struct TagPair {
+    Node * Node::*left;
+    Node * Node::*right;
+    auto inverse () const noexcept -> TagPair {
+      return { right, left };
+    }
+  };
+  auto getTagPair_ (bool isLeft) -> TagPair {
+    return isLeft
+      ? TagPair { &Node::left, &Node::right }
+      : TagPair { &Node::right, &Node::left };
+  }
 
   /**
    * The ``root'' is the left child of the end node.
@@ -418,23 +430,13 @@ class RbTree {
     root->type = Node::kBlack;
   }
 
-  auto leftRotate_ (Node *x) -> void {
-    Node *y = x->right;
-    x->right = y->left;
-    if (y->left != nullptr) y->left->parent = x;
-    if (x == root_()) setRoot_(y);
-    else x->replace(y);
-    y->left = x;
-    x->parent = y;
-  }
-  // TODO: dedupe the code
-  auto rightRotate_ (Node *x) -> void {
-    Node *y = x->left;
-    x->left = y->right;
-    if (y->right != nullptr) y->right->parent = x;
-    if (x == root_()) setRoot_(y);
-    else x->replace(y);
-    y->right = x;
+  auto rotate_ (Node *x, TagPair direction) -> void {
+    auto [ left, right ] = direction;
+    Node *y = x->*right;
+    x->*right = y->*left;
+    if (y->*left != nullptr) (y->*left)->parent = x;
+    x->replace(y);
+    y->*left = x;
     x->parent = y;
   }
 
@@ -469,8 +471,10 @@ class RbTree {
     if (node->parent->type != Node::kRed) return;
     if (node == root_()) return;
     bool parentIsLeft = node->parent->isLeft();
+    TagPair dir = getTagPair_(parentIsLeft);
+    auto [ left, right ] = dir;
     Node *grandParent = node->parent->parent;
-    Node *uncle = parentIsLeft ? grandParent->right : grandParent->left;
+    Node *uncle = grandParent->*right;
     if (uncle != nullptr && uncle->type == Node::kRed) {
       node->parent->type = Node::kBlack;
       grandParent->type = grandParent == root_() ? Node::kBlack : Node::kRed;
@@ -480,13 +484,11 @@ class RbTree {
     }
     if (parentIsLeft != node->isLeft()) {
       node = node->parent;
-      if (parentIsLeft) leftRotate_(node);
-      else rightRotate_(node);
+      rotate_(node, dir);
     }
     node->parent->type = Node::kBlack;
     grandParent->type = Node::kRed;
-    if (parentIsLeft) rightRotate_(grandParent);
-    else leftRotate_(grandParent);
+    rotate_(grandParent, dir.inverse());
   }
 
   /**
@@ -526,14 +528,12 @@ class RbTree {
       return node == nullptr || node->type == Node::kBlack;
     };
     // node is left child, so neighbor is right
-    bool isLeft = !neighbor->isLeft();
-    auto left = isLeft ? &Node::left : &Node::right;
-    auto right = isLeft ? &Node::right : &Node::left;
+    TagPair dir = getTagPair_(!neighbor->isLeft());
+    auto [ left, right ] = dir;
     if (neighbor->type == Node::kRed) {
       neighbor->type = Node::kBlack;
       neighbor->parent->type = Node::kRed;
-      if (isLeft) leftRotate_(neighbor->parent);
-      else rightRotate_(neighbor->parent);
+      rotate_(neighbor->parent, dir);
       neighbor = neighbor->*left->*right;
     }
     if (nullOrBlack(neighbor->left) && nullOrBlack(neighbor->right)) {
@@ -551,15 +551,13 @@ class RbTree {
     if (nullOrBlack(neighbor->*right)) {
       (neighbor->*left)->type = Node::kBlack;
       neighbor->type = Node::kRed;
-      if (isLeft) rightRotate_(neighbor);
-      else leftRotate_(neighbor);
+      rotate_(neighbor, dir.inverse());
       neighbor = neighbor->parent;
     }
     neighbor->type = neighbor->parent->type;
     neighbor->parent->type = Node::kBlack;
     (neighbor->*right)->type = Node::kBlack;
-    if (isLeft) leftRotate_(neighbor->parent);
-    else rightRotate_(neighbor->parent);
+    rotate_(neighbor->parent, dir);
   }
 };
 
