@@ -10,12 +10,12 @@ class nullopt {};
 template <typename T>
 class Optional {
  public:
-  bool has;
+  bool has = false;
  private:
   T *value_ = nullptr;
  public:
-  Optional () : has(false) {}
-  Optional (const nullopt &) : has(false) {}
+  Optional () = default;
+  Optional (const nullopt &/* unused */) {}
   Optional (const T &value) : has(true), value_(new T(value)) {}
   Optional (const Optional &other) { *this = other; }
   ~Optional () { delete value_; }
