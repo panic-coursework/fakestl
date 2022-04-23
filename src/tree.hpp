@@ -3,12 +3,47 @@
 
 #include "utility.hpp"
 #include "exceptions.hpp"
+#include "type_traits.hpp"
 
 namespace panic {
 
 class nullopt {};
+
 template <typename T>
 class Optional {
+ public:
+  bool has = false;
+ private:
+  char value_[sizeof(T)];
+  auto ptr_ () -> T * { return reinterpret_cast<T *>(value_); }
+  auto ptr_ () const -> const T * { return reinterpret_cast<const T *>(value_); }
+  auto clear_ () -> void {
+    if (has) {
+      has = false;
+      ptr_()->~T();
+    }
+  }
+ public:
+  Optional () = default;
+  Optional (const nullopt &/* unused */) {}
+  Optional (const T &value) : has(true) {
+    new(ptr_()) T(value);
+  }
+  Optional (const Optional &other) { *this = other; }
+  ~Optional () { clear_(); }
+  auto operator= (const Optional &other) -> Optional & {
+    if (this == &other) return *this;
+    clear_();
+    has = other.has;
+    if (has) new(ptr_()) T(other.force());
+    return *this;
+  }
+  auto force () -> T & { return *ptr_(); }
+  auto force () const -> const T & { return *ptr_(); }
+};
+
+template <typename T>
+class Optional<T *> {
  public:
   bool has = false;
  private:
@@ -16,19 +51,9 @@ class Optional {
  public:
   Optional () = default;
   Optional (const nullopt &/* unused */) {}
-  Optional (const T &value) : has(true), value_(new T(value)) {}
-  Optional (const Optional &other) { *this = other; }
-  ~Optional () { delete value_; }
-  auto operator= (const Optional &other) -> Optional & {
-    if (this == &other) return *this;
-    has = other.has;
-    delete value_;
-    value_ = nullptr;
-    if (has) value_ = new T(*other.value_);
-    return *this;
-  }
-  auto force () -> T & { return *value_; }
-  auto force () const -> const T & { return *value_; }
+  Optional (T *value) : has(true), value_(value) {}
+  auto force () -> T *& { return value_; }
+  auto force () const -> T * const & { return value_; }
 };
 
 /**
@@ -233,14 +258,9 @@ class RbTree {
     init_();
   }
   auto insert (const value_type &value) -> sjtu::pair<iterator, bool> {
-    Node *node = new Node(value);
-    auto res = insert_(node);
-    if (res.has) {
-      delete node;
-      return sjtu::pair(iterator(res.force(), this), false);
-    }
-    ++size_;
-    return sjtu::pair(iterator(node, this), true);
+    auto res = emplace_(value);
+    if (!res.has) ++size_;
+    return sjtu::pair(iterator(res.force(), this), !res.has);
   }
   auto erase (iterator pos) -> void {
     if (pos.node_ == endNode_ || pos.home_ != this) throw sjtu::invalid_iterator();
@@ -304,26 +324,30 @@ class RbTree {
     }
 
     /**
-     * Inserts the new node into the tree hierachy. It takes
-     * care of the order, but does not attempt to repair
-     * balance. Therefore, it is possible to get an invalid
-     * tree after calling.
+     * Constructs and inserts the new node into the tree
+     * hierachy. It takes care of the order, but does not
+     * attempt to repair balance. Therefore, it is possible
+     * to get an invalid tree after calling.
      *
      * @returns nullopt if successful, Node * if a duplicate
      *   is found, the duplicate node.
      */
-    auto insert (Node *newNode) -> Optional<Node *> {
-      if (!lt_(newNode, this) && !lt_(this, newNode)) {
+    auto emplace (const value_type &v) -> Optional<Node *> {
+      Cmp cmp;
+      if (!cmp(v, value.force()) && !cmp(value.force(), v)) {
         return this;
       }
-      Node *&next = lt_(newNode, this) ? left : right;
+      Node *&next = cmp(v, value.force()) ? left : right;
       if (next != nullptr) {
-        return next->insert(newNode);
+        return next->emplace(v);
       }
+      Node *newNode = new Node(v);
       newNode->parent = this;
       next = newNode;
       newNode->type = kRed;
-      return nullopt();
+      Optional opt = newNode;
+      opt.has = false;
+      return opt;
     }
 
     /// The minimal node of the tree.
@@ -441,22 +465,24 @@ class RbTree {
   }
 
   /**
-   * Inserts a new node and performs fixups if necessary.
-   * Note that the caller needs to construct the new node
-   * before calling, and destruct the new node if the insert
-   * was unsuccessful. It updates leftmost_ but not size_.
+   * Constructs and inserts a new node and performs fixups
+   * if necessary. It updates leftmost_ but not size_.
    *
    * @returns nullopt if successful, Node * if a duplicate
    *   is found, the duplicate node.
    */
-  auto insert_ (Node *newNode) -> Optional<Node *> {
+  auto emplace_ (const value_type &value) -> Optional<Node *> {
     if (root_() == nullptr) {
+      Node *newNode = new Node(value);
       setRoot_(newNode);
       leftmost_ = newNode;
-      return nullopt();
+      Optional opt = newNode;
+      opt.has = false;
+      return opt;
     }
-    auto dup = root_()->insert(newNode);
+    auto dup = root_()->emplace(value);
     if (dup.has) return dup;
+    Node *newNode = dup.force();
     newNode->type = newNode == root_() ? Node::kBlack : Node::kRed;
     // trick copied from libc++: if the left child of the
     // old leftmost node is not nullptr, then it must be
@@ -464,7 +490,7 @@ class RbTree {
     if (leftmost_->left != nullptr) leftmost_ = newNode;
     fixupInsert_(newNode);
     root_()->type = Node::kBlack;
-    return nullopt();
+    return dup;
   }
   /// Performs fixups after an insert.
   auto fixupInsert_ (Node *node) -> void {

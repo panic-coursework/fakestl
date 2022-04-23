@@ -77,6 +77,19 @@ class iterator_traits {
 template <typename T>
 using my_type_traits = iterator_traits<T>;
 
+template <bool condition>
+class enable_if {};
+template <>
+class enable_if<true> {
+ public:
+  using type = true_type;
+};
+
+template <typename T>
+auto move (T &value) -> T && {
+  return reinterpret_cast<T &&>(value);
+}
+
 } // namespace sjtu
 
 #endif // SJTU_TYPE_TRAITS_HPP_
